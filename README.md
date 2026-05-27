@@ -71,10 +71,3 @@ Deployed on Vercel. To deploy your own instance:
 
 Or via CLI:
 
-```bash
-npx vercel --prod
-```
-
-## License
-
-MIT
