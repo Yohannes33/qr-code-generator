@@ -27,6 +27,42 @@ class QRErrorBoundary extends Component<
 const ERROR_LEVELS = ["L", "M", "Q", "H"] as const;
 type ErrorLevel = (typeof ERROR_LEVELS)[number];
 
+// QR spec max capacity per error level and encoding mode
+const QR_CAPACITY: Record<ErrorLevel, { numeric: number; alphanumeric: number; byte: number }> = {
+  L: { numeric: 7089, alphanumeric: 4296, byte: 2953 },
+  M: { numeric: 5596, alphanumeric: 3391, byte: 2331 },
+  Q: { numeric: 3993, alphanumeric: 2420, byte: 1663 },
+  H: { numeric: 3057, alphanumeric: 1852, byte: 1273 },
+};
+
+// QR alphanumeric charset (uppercase only)
+const QR_ALPHANUMERIC_RE = /^[0-9A-Z $%*+\-./:]*$/;
+
+function getInputMode(text: string): "numeric" | "alphanumeric" | "byte" {
+  if (/^\d*$/.test(text)) return "numeric";
+  if (QR_ALPHANUMERIC_RE.test(text)) return "alphanumeric";
+  return "byte";
+}
+
+function getCapacity(text: string, level: ErrorLevel): number {
+  const mode = getInputMode(text);
+  return QR_CAPACITY[level][mode];
+}
+
+function getInputLength(text: string): number {
+  const mode = getInputMode(text);
+  if (mode === "byte") return new TextEncoder().encode(text).length;
+  return text.length;
+}
+
+// Returns the lowest error level that fits the input, or null if none fits
+function getSuggestedLevel(text: string): ErrorLevel | null {
+  for (const level of ERROR_LEVELS) {
+    if (getInputLength(text) <= getCapacity(text, level)) return level;
+  }
+  return null;
+}
+
 const FOREGROUND_PRESETS = [
   { label: "Black", value: "#000000" },
   { label: "Indigo", value: "#4338ca" },
@@ -43,8 +79,10 @@ export default function Home() {
   const qrRef = useRef<HTMLDivElement>(null);
 
   const hasInput = input.trim().length > 0;
-  // QR code max capacity at level L is ~2953 bytes; flag inputs that will fail
-  const isTooLong = new TextEncoder().encode(input).length > 2953;
+  const inputLength = getInputLength(input);
+  const capacity = getCapacity(input, errorLevel);
+  const isTooLong = inputLength > capacity;
+  const suggestedLevel = isTooLong ? getSuggestedLevel(input) : null;
 
   const downloadSVG = useCallback(() => {
     const svg = qrRef.current?.querySelector("svg");
@@ -100,12 +138,26 @@ export default function Home() {
                 Content
               </label>
               <textarea
-                className="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className={`w-full rounded-lg border bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
+                  isTooLong
+                    ? "border-rose-400 dark:border-rose-500"
+                    : "border-slate-300 dark:border-slate-600"
+                }`}
                 rows={4}
                 placeholder="https://example.com or any text..."
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
               />
+              {hasInput && (
+                <div className="flex justify-between text-xs mt-1">
+                  <span className="text-slate-400 dark:text-slate-500">
+                    {getInputMode(input) !== "byte" ? `${getInputMode(input)} mode` : "byte mode"}
+                  </span>
+                  <span className={isTooLong ? "text-rose-500 font-medium" : inputLength > capacity * 0.9 ? "text-amber-500" : "text-slate-400"}>
+                    {inputLength.toLocaleString()} / {capacity.toLocaleString()}
+                  </span>
+                </div>
+              )}
             </div>
 
             <div>
@@ -213,10 +265,22 @@ export default function Home() {
                 isTooLong ? (
                   <div className="text-center text-sm text-rose-500 dark:text-rose-400 px-4">
                     <div className="text-4xl mb-3">⚠️</div>
-                    <p className="font-medium">Content too long for a QR code</p>
+                    <p className="font-medium">Content too long for level {errorLevel}</p>
                     <p className="text-xs text-slate-400 mt-1">
-                      QR codes hold at most ~2,953 characters. Try shortening your input.
+                      {inputLength.toLocaleString()} / {capacity.toLocaleString()} limit at level {errorLevel}.
                     </p>
+                    {suggestedLevel ? (
+                      <button
+                        onClick={() => setErrorLevel(suggestedLevel)}
+                        className="mt-3 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 transition-colors"
+                      >
+                        Switch to level {suggestedLevel} (fits {QR_CAPACITY[suggestedLevel][getInputMode(input)].toLocaleString()} chars)
+                      </button>
+                    ) : (
+                      <p className="text-xs text-slate-400 mt-1">
+                        Exceeds all error correction levels. Shorten your input.
+                      </p>
+                    )}
                   </div>
                 ) : (
                   <QRErrorBoundary
