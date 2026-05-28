@@ -1,7 +1,28 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, Component, type ReactNode } from "react";
 import QRCode from "react-qr-code";
+
+class QRErrorBoundary extends Component<
+  { children: ReactNode; fallback: ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { children: ReactNode; fallback: ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  componentDidUpdate(prevProps: { children: ReactNode }) {
+    if (prevProps.children !== this.props.children && this.state.hasError) {
+      this.setState({ hasError: false });
+    }
+  }
+  render() {
+    return this.state.hasError ? this.props.fallback : this.props.children;
+  }
+}
 
 const ERROR_LEVELS = ["L", "M", "Q", "H"] as const;
 type ErrorLevel = (typeof ERROR_LEVELS)[number];
@@ -22,6 +43,8 @@ export default function Home() {
   const qrRef = useRef<HTMLDivElement>(null);
 
   const hasInput = input.trim().length > 0;
+  // QR code max capacity at level L is ~2953 bytes; flag inputs that will fail
+  const isTooLong = new TextEncoder().encode(input).length > 2953;
 
   const downloadSVG = useCallback(() => {
     const svg = qrRef.current?.querySelector("svg");
@@ -187,13 +210,36 @@ export default function Home() {
               style={{ backgroundColor: bgColor, minHeight: 256, padding: 16 }}
             >
               {hasInput ? (
-                <QRCode
-                  value={input}
-                  level={errorLevel}
-                  fgColor={fgColor}
-                  bgColor={bgColor}
-                  size={Math.min(size, 320)}
-                />
+                isTooLong ? (
+                  <div className="text-center text-sm text-rose-500 dark:text-rose-400 px-4">
+                    <div className="text-4xl mb-3">⚠️</div>
+                    <p className="font-medium">Content too long for a QR code</p>
+                    <p className="text-xs text-slate-400 mt-1">
+                      QR codes hold at most ~2,953 characters. Try shortening your input.
+                    </p>
+                  </div>
+                ) : (
+                  <QRErrorBoundary
+                    key={input}
+                    fallback={
+                      <div className="text-center text-sm text-rose-500 dark:text-rose-400 px-4">
+                        <div className="text-4xl mb-3">⚠️</div>
+                        <p className="font-medium">Cannot generate QR code</p>
+                        <p className="text-xs text-slate-400 mt-1">
+                          The input could not be encoded. Try different content or a lower error correction level.
+                        </p>
+                      </div>
+                    }
+                  >
+                    <QRCode
+                      value={input}
+                      level={errorLevel}
+                      fgColor={fgColor}
+                      bgColor={bgColor}
+                      size={Math.min(size, 320)}
+                    />
+                  </QRErrorBoundary>
+                )
               ) : (
                 <div className="text-slate-300 dark:text-slate-600 text-center text-sm select-none">
                   <div className="text-5xl mb-3">⬛</div>
